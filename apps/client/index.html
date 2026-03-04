@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <title>CodeSync Engine - Final System</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: white; display: flex; flex-direction: column; height: 100vh; }
+        #navbar { height: 55px; background: #2d2d2d; display: flex; align-items: center; padding: 0 20px; justify-content: space-between; border-bottom: 2px solid #007acc; }
+        .controls { display: flex; gap: 12px; align-items: center; }
+        input, select { background: #3c3c3c; border: 1px solid #555; color: white; padding: 6px; border-radius: 4px; }
+        button { border: none; color: white; padding: 7px 18px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .btn-join { background: #007acc; }
+        .btn-run { background: #28a745; }
+        .btn-run:hover { background: #218838; }
+        #editor-container { flex: 1; border-bottom: 1px solid #444; }
+        #terminal { height: 220px; background: #000; padding: 15px; font-family: 'Consolas', monospace; overflow-y: auto; color: #00ff00; white-space: pre-wrap; font-size: 14px; border-left: 5px solid #333; }
+        .status { font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: bold; text-transform: uppercase; }
+        .online { background: #28a74533; color: #28a745; border: 1px solid #28a745; }
+        .offline { background: #dc354533; color: #dc3545; border: 1px solid #dc3545; }
+    </style>
+</head>
+<body>
+
+<div id="navbar">
+    <div style="font-weight: bold; font-size: 1.2rem;">CODESYNC <span style="color: #007acc;">PRO</span></div>
+    <div class="controls">
+        <span id="status" class="status offline">OFFLINE</span>
+        <input type="text" id="roomInput" value="main-room" placeholder="Room ID">
+        <select id="langSelect" onchange="changeLanguage()">
+            <option value="javascript">JavaScript</option>
+            <option value="python">Python</option>
+            <option value="go">Golang</option>
+        </select>
+        <button class="btn-join" onclick="joinRoom()">Join</button>
+        <button class="btn-run" onclick="runCode()">▶ RUN</button>
+    </div>
+</div>
+
+<div id="editor-container"></div>
+<div id="terminal">System Initialized. Connected to Docker Engine...</div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+
+<script>
+    let editor, socket, currentRoom = "main-room", isRemoteUpdate = false;
+
+    // 1. Socket Setup
+    socket = io('http://127.0.0.1:3000', { transports: ['websocket'] });
+
+    socket.on('connect', () => {
+        document.getElementById('status').innerText = "ONLINE";
+        document.getElementById('status').className = "status online";
+        joinRoom();
+    });
+
+    // 2. Monaco Editor Setup
+    require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
+    require(['vs/editor/editor.main'], function () {
+        editor = monaco.editor.create(document.getElementById('editor-container'), {
+            value: "console.log('Welcome to CodeSync Pro');",
+            language: 'javascript',
+            theme: 'vs-dark',
+            automaticLayout: true,
+            fontSize: 15,
+            minimap: { enabled: false }
+        });
+
+        editor.onDidChangeModelContent(() => {
+            if (isRemoteUpdate) return;
+            socket.emit('code-change', { 
+                roomId: currentRoom, 
+                code: editor.getValue(),
+                language: document.getElementById('langSelect').value 
+            });
+        });
+    });
+
+    // 3. Functions
+    function joinRoom() {
+        currentRoom = document.getElementById('roomInput').value;
+        socket.emit('join-room', currentRoom);
+    }
+
+    function changeLanguage() {
+        const lang = document.getElementById('langSelect').value;
+        monaco.editor.setModelLanguage(editor.getModel(), lang);
+    }
+
+    function runCode() {
+        const term = document.getElementById('terminal');
+        term.innerText = `> Running in isolated container...\n`;
+        socket.emit('run-code', { code: editor.getValue(), language: document.getElementById('langSelect').value });
+    }
+
+    // 4. Socket Listeners
+    socket.on('load-saved-code', (data) => {
+        isRemoteUpdate = true;
+        editor.setValue(data.code);
+        document.getElementById('langSelect').value = data.language || 'javascript';
+        changeLanguage();
+        isRemoteUpdate = false;
+    });
+
+    socket.on('update-editor', (newCode) => {
+        if (editor && newCode !== editor.getValue()) {
+            isRemoteUpdate = true;
+            const pos = editor.getPosition();
+            editor.setValue(newCode);
+            editor.setPosition(pos);
+            isRemoteUpdate = false;
+        }
+    });
+
+    socket.on('code-result', (res) => {
+        document.getElementById('terminal').innerText = res;
+    });
+</script>
+</body>
+</html>

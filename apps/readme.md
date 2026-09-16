@@ -3,20 +3,20 @@
 CodeSync Pro adalah platform editor kode kolaboratif real-time yang memungkinkan beberapa pengguna untuk menulis, mengedit, dan menjalankan kode secara bersamaan dalam lingkungan sandbox yang aman menggunakan Docker.
 
 ## Fitur Utama
-* **Real-time Collaboration**: Sinkronisasi kode antar pengguna secara instan menggunakan Socket.io.
-* **Multi-Language Support**: Mendukung eksekusi kode untuk **JavaScript**, **Python**, dan **Golang**.
-* **Isolated Execution (Sandboxing)**: Setiap kode dijalankan di dalam container Docker yang terisolasi untuk keamanan server.
-* **Database Persistence**: Menggunakan MongoDB 4.4 untuk menyimpan kode berdasarkan `Room ID`, sehingga data tidak hilang saat halaman di-refresh.
-* **Room System**: Pengguna dapat membuat atau bergabung ke ruangan tertentu menggunakan ID unik.
-* **Monaco Editor**: Menggunakan engine editor yang sama dengan VS Code untuk pengalaman koding yang maksimal.
+* Real-time Collaboration: Sinkronisasi kode antar pengguna secara instan menggunakan Socket.io.
+* Multi-Language Support: Mendukung eksekusi kode untuk avaScript, Python, dan Golang.
+* Isolated Execution (Sandboxing)k keamanan server.
+* Database Persistence: Menggunakan MongoDB 4.4 untuk menyimpan kode berdasarkan `Room ID`, sehingga data tidak hilang saat halaman di-refresh.
+* Room System: Pengguna dapat membuat atau bergabung ke ruangan tertentu menggunakan ID unik.
+* Monaco Editor: Menggunakan engine editor yang sama dengan VS Code untuk pengalaman koding yang maksimal.
 
 ## Arsitektur Teknologi
 | Komponen | Teknologi |
 | --- | --- |
-| **Frontend** | HTML5, CSS3, Monaco Editor API |
-| **Backend** | Node.js, Express, Socket.io |
-| **Database** | MongoDB 4.4 (Compatibility Mode for Non-AVX CPUs) |
-| **Virtualization** | Docker Engine (Sandboxed Runtime) |
+| Frontend | HTML5, CSS3, Monaco Editor API |
+| Backend | Node.js, Express, Socket.io |
+| Database | MongoDB 4.4 (Compatibility Mode for Non-AVX CPUs) |
+| Virtualization | Docker Engine (Sandboxed Runtime) |
 
 
 
@@ -37,3 +37,6 @@ CodeSync Pro adalah platform editor kode kolaboratif real-time yang memungkinkan
 Jalankan container MongoDB versi 4.4 (mendukung semua jenis CPU):
 ```bash
 docker run -d --name mongodb-codesync -p 27017:27017 mongo:4.4
+
+### 3. Jalankan Server
+Ketik "node server.js"

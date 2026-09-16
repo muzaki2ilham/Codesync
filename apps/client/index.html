@@ -1,120 +1,309 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-    <meta charset="UTF-8">
-    <title>CodeSync Engine - Final System</title>
-    <style>
-        body { margin: 0; font-family: 'Segoe UI', sans-serif; background: #1e1e1e; color: white; display: flex; flex-direction: column; height: 100vh; }
-        #navbar { height: 55px; background: #2d2d2d; display: flex; align-items: center; padding: 0 20px; justify-content: space-between; border-bottom: 2px solid #007acc; }
-        .controls { display: flex; gap: 12px; align-items: center; }
-        input, select { background: #3c3c3c; border: 1px solid #555; color: white; padding: 6px; border-radius: 4px; }
-        button { border: none; color: white; padding: 7px 18px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.3s; }
-        .btn-join { background: #007acc; }
-        .btn-run { background: #28a745; }
-        .btn-run:hover { background: #218838; }
-        #editor-container { flex: 1; border-bottom: 1px solid #444; }
-        #terminal { height: 220px; background: #000; padding: 15px; font-family: 'Consolas', monospace; overflow-y: auto; color: #00ff00; white-space: pre-wrap; font-size: 14px; border-left: 5px solid #333; }
-        .status { font-size: 11px; padding: 4px 10px; border-radius: 20px; font-weight: bold; text-transform: uppercase; }
-        .online { background: #28a74533; color: #28a745; border: 1px solid #28a745; }
-        .offline { background: #dc354533; color: #dc3545; border: 1px solid #dc3545; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeSync - Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: { colors: { ink: '#171522', cream: '#fff8e8', pink: '#ff5c8a', yellow: '#ffd447', aqua: '#42e8d4', purple: '#7357ff', blue: '#4a8cff' }, fontFamily: { display: ['Bowlby One SC', 'sans-serif'], body: ['DM Sans', 'sans-serif'], mono: ['Space Mono', 'monospace'] }, boxShadow: { pop: '5px 5px 0 #171522', popSmall: '3px 3px 0 #171522' } } } };
+  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=DM+Sans:wght@400;500;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #fff8e8; color: #171522; }
+    .dots { background-image: radial-gradient(#171522 1.3px, transparent 1.3px); background-size: 16px 16px; }
+    #editor-container { min-height: 320px; }
+    .monaco-editor, .monaco-editor-background, .monaco-editor .margin { background-color: #211e2b !important; }
+    .monaco-editor .line-numbers { color: #6e6784 !important; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: #7357ff; border: 2px solid #171522; }
+    button:focus, input:focus, select:focus { outline: 3px solid #42e8d4; outline-offset: 2px; }
+  </style>
 </head>
 <body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+  <script type="text/babel">
+    const { useEffect, useRef, useState } = React;
+    const currentUser = sessionStorage.getItem('username') || 'DevGuest';
+    const OUTPUT_PREFIX = '__CODESYNC_OUTPUT__';
+    const CHECKPOINT_PREFIX = 'codesync-checkpoint:';
+    const ROOM_STATE_KEY = `codesync-room:${currentUser}`;
+    const CHAT_HISTORY_PREFIX = 'codesync-chat:';
+    const TERMINAL_PREFIX = 'codesync-terminal:';
+    const initialCode = '// Welcome to CodeSync!\n// Pick a room, invite your crew, and make something cool.\n\nfunction hello(name) {\n  return `Hello, ${name}!`;\n}\n\nconsole.log(hello("CodeSync"));';
+    const helloWorldTemplates = {
+      javascript: '// JavaScript Hello World\nconsole.log("Hello, World!");',
+      python: '# Python Hello World\nprint("Hello, World!")',
+      go: '// Go Hello World\npackage main\n\nimport "fmt"\n\nfunc main() {\n\tfmt.Println("Hello, World!")\n}'
+    };
 
-<div id="navbar">
-    <div style="font-weight: bold; font-size: 1.2rem;">CODESYNC <span style="color: #007acc;">PRO</span></div>
-    <div class="controls">
-        <span id="status" class="status offline">OFFLINE</span>
-        <input type="text" id="roomInput" value="main-room" placeholder="Room ID">
-        <select id="langSelect" onchange="changeLanguage()">
-            <option value="javascript">JavaScript</option>
-            <option value="python">Python</option>
-            <option value="go">Golang</option>
-        </select>
-        <button class="btn-join" onclick="joinRoom()">Join</button>
-        <button class="btn-run" onclick="runCode()">▶ RUN</button>
-    </div>
-</div>
+    if (!sessionStorage.getItem('username')) window.location.href = 'login.html';
 
-<div id="editor-container"></div>
-<div id="terminal">System Initialized. Connected to Docker Engine...</div>
+    function App() {
+      const editorRef = useRef(null);
+      const socketRef = useRef(null);
+      const roomRef = useRef('');
+      const roleRef = useRef('viewer');
+      const passwordRef = useRef('');
+      const languageRef = useRef('javascript');
+      const remoteUpdateRef = useRef(false);
+      const pendingCodeRef = useRef(null);
+      const pendingRoomDataRef = useRef(null);
+      const chatRoomRef = useRef('');
+      const pendingRunRef = useRef(null);
+      const [room, setRoom] = useState('');
+      const [roomInput, setRoomInput] = useState('');
+      const [password, setPassword] = useState('');
+      const [language, setLanguage] = useState('javascript');
+      const [role, setRole] = useState('viewer');
+      const [users, setUsers] = useState([]);
+      const [messages, setMessages] = useState([]);
+      const [message, setMessage] = useState('');
+      const [terminal, setTerminal] = useState(['> Studio ready. Create or join a room to start.']);
+      const [connected, setConnected] = useState(false);
 
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
-
-<script>
-    let editor, socket, currentRoom = "main-room", isRemoteUpdate = false;
-
-    // 1. Socket Setup
-    socket = io('http://127.0.0.1:3000', { transports: ['websocket'] });
-
-    socket.on('connect', () => {
-        document.getElementById('status').innerText = "ONLINE";
-        document.getElementById('status').className = "status online";
-        joinRoom();
-    });
-
-    // 2. Monaco Editor Setup
-    require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
-    require(['vs/editor/editor.main'], function () {
-        editor = monaco.editor.create(document.getElementById('editor-container'), {
-            value: "console.log('Welcome to CodeSync Pro');",
-            language: 'javascript',
-            theme: 'vs-dark',
-            automaticLayout: true,
-            fontSize: 15,
-            minimap: { enabled: false }
-        });
-
-        editor.onDidChangeModelContent(() => {
-            if (isRemoteUpdate) return;
-            socket.emit('code-change', { 
-                roomId: currentRoom, 
-                code: editor.getValue(),
-                language: document.getElementById('langSelect').value 
-            });
-        });
-    });
-
-    // 3. Functions
-    function joinRoom() {
-        currentRoom = document.getElementById('roomInput').value;
-        socket.emit('join-room', currentRoom);
-    }
-
-    function changeLanguage() {
-        const lang = document.getElementById('langSelect').value;
-        monaco.editor.setModelLanguage(editor.getModel(), lang);
-    }
-
-    function runCode() {
-        const term = document.getElementById('terminal');
-        term.innerText = `> Running in isolated container...\n`;
-        socket.emit('run-code', { code: editor.getValue(), language: document.getElementById('langSelect').value });
-    }
-
-    // 4. Socket Listeners
-    socket.on('load-saved-code', (data) => {
-        isRemoteUpdate = true;
-        editor.setValue(data.code);
-        document.getElementById('langSelect').value = data.language || 'javascript';
-        changeLanguage();
-        isRemoteUpdate = false;
-    });
-
-    socket.on('update-editor', (newCode) => {
-        if (editor && newCode !== editor.getValue()) {
-            isRemoteUpdate = true;
-            const pos = editor.getPosition();
-            editor.setValue(newCode);
-            editor.setPosition(pos);
-            isRemoteUpdate = false;
+      useEffect(() => {
+        const lastRoom = JSON.parse(localStorage.getItem(ROOM_STATE_KEY) || 'null');
+        if (lastRoom?.roomId) {
+          roomRef.current = lastRoom.roomId;
+          passwordRef.current = lastRoom.password || '';
+          languageRef.current = lastRoom.language || 'javascript';
+          setRoom(lastRoom.roomId);
+          setRoomInput(lastRoom.roomId);
+          setPassword(lastRoom.password || '');
+          setLanguage(lastRoom.language || 'javascript');
+          chatRoomRef.current = lastRoom.roomId;
+          setMessages(JSON.parse(localStorage.getItem(CHAT_HISTORY_PREFIX + lastRoom.roomId) || '[]'));
+          setTerminal(JSON.parse(localStorage.getItem(TERMINAL_PREFIX + lastRoom.roomId) || '["> Studio restored. Rejoining room..."]'));
         }
-    });
+        const socket = io('http://localhost:3000');
+        socketRef.current = socket;
+        socket.on('connect', () => {
+          if (roomRef.current) {
+            socket.emit('join-room', {
+              roomId: roomRef.current,
+              password: passwordRef.current,
+              username: currentUser,
+              language: languageRef.current,
+              action: 'join'
+            });
+          }
+        });
+        socket.on('disconnect', () => {
+          setConnected(false);
+          setTerminal((current) => [...current, '> Connection interrupted.']);
+        });
+        require.config({ paths: { vs: 'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs' } });
 
-    socket.on('code-result', (res) => {
-        document.getElementById('terminal').innerText = res;
-    });
-</script>
+        require(['vs/editor/editor.main'], () => {
+          editorRef.current = monaco.editor.create(document.getElementById('editor-container'), {
+            value: initialCode, language: 'javascript', theme: 'vs-dark', automaticLayout: true,
+            readOnly: true, fontFamily: 'Space Mono', fontSize: 13, minimap: { enabled: false },
+            scrollBeyondLastLine: false, padding: { top: 18 }
+          });
+          if (pendingCodeRef.current !== null) {
+            remoteUpdateRef.current = true;
+            editorRef.current.setValue(pendingCodeRef.current);
+            pendingCodeRef.current = null;
+            remoteUpdateRef.current = false;
+          }
+          if (pendingRoomDataRef.current) {
+            const pendingRoom = pendingRoomDataRef.current;
+            monaco.editor.setModelLanguage(editorRef.current.getModel(), pendingRoom.language);
+            editorRef.current.updateOptions({ readOnly: pendingRoom.role === 'viewer' });
+            pendingRoomDataRef.current = null;
+          }
+          editorRef.current.onDidChangeModelContent(() => {
+            if (!remoteUpdateRef.current && roomRef.current && roleRef.current === 'editor') {
+              const code = editorRef.current.getValue();
+              localStorage.setItem(CHECKPOINT_PREFIX + roomRef.current, code);
+              socket.emit('code-change', { roomId: roomRef.current, code });
+            }
+          });
+        });
+
+        socket.on('load-saved-code', (data) => {
+          remoteUpdateRef.current = true;
+          roleRef.current = data.role;
+          setRole(data.role);
+          setLanguage(data.language);
+          const savedCheckpoint = localStorage.getItem(CHECKPOINT_PREFIX + roomRef.current);
+          const serverHasEmptyCode = !data.content || data.content.trim() === '// New Room';
+          const content = data.role === 'editor' && serverHasEmptyCode
+            ? (savedCheckpoint || helloWorldTemplates[data.language] || data.content)
+            : data.content;
+          if (editorRef.current) {
+            editorRef.current.setValue(content);
+            monaco.editor.setModelLanguage(editorRef.current.getModel(), data.language);
+            editorRef.current.updateOptions({ readOnly: data.role === 'viewer' });
+          } else {
+            pendingCodeRef.current = content;
+            pendingRoomDataRef.current = { role: data.role, language: data.language };
+          }
+          if (content !== data.content && data.role === 'editor') {
+            localStorage.setItem(CHECKPOINT_PREFIX + roomRef.current, content);
+            socket.emit('code-change', { roomId: roomRef.current, code: content });
+          }
+          remoteUpdateRef.current = false;
+          setConnected(true);
+          setTerminal((current) => [...current, `> Synced room: ${roomRef.current}`]);
+          if (pendingRunRef.current) {
+            const pendingRun = pendingRunRef.current;
+            pendingRunRef.current = null;
+            socket.emit('run-code', pendingRun);
+            setTerminal((current) => [...current, '> Resuming interrupted run...']);
+          }
+        });
+
+        socket.on('update-editor', (code) => {
+          remoteUpdateRef.current = true;
+          const position = editorRef.current?.getPosition();
+          editorRef.current?.setValue(code);
+          if (position) editorRef.current?.setPosition(position);
+          remoteUpdateRef.current = false;
+        });
+
+        socket.on('update-user-list', setUsers);
+        socket.on('role-updated', (newRole) => {
+          roleRef.current = newRole;
+          setRole(newRole);
+          editorRef.current?.updateOptions({ readOnly: newRole === 'viewer' });
+          setTerminal((current) => [...current, `> Your role is now ${newRole.toUpperCase()}`]);
+        });
+        socket.on('error-msg', (error) => setTerminal((current) => [...current, `> ERROR: ${error}`]));
+        socket.on('code-result', (result) => {
+          const output = String(result);
+          setTerminal([output]);
+          localStorage.setItem(TERMINAL_PREFIX + roomRef.current, JSON.stringify([output]));
+          socket.emit('chat-message', { roomId: roomRef.current, username: currentUser, message: OUTPUT_PREFIX + output });
+        });
+        socket.on('chat-message', (data) => {
+          if (data.message.startsWith(OUTPUT_PREFIX)) {
+            const output = data.message.slice(OUTPUT_PREFIX.length);
+            setTerminal([output]);
+            localStorage.setItem(TERMINAL_PREFIX + roomRef.current, JSON.stringify([output]));
+            return;
+          }
+          setMessages((current) => {
+            const next = [...current, data].slice(-200);
+            if (chatRoomRef.current) localStorage.setItem(CHAT_HISTORY_PREFIX + chatRoomRef.current, JSON.stringify(next));
+            return next;
+          });
+        });
+        return () => socket.disconnect();
+      }, []);
+
+      function join(action) {
+        const nextRoom = roomInput.trim();
+        if (!nextRoom) {
+          setTerminal((current) => [...current, '> ERROR: Room name is required.']);
+          return;
+        }
+        roomRef.current = nextRoom;
+        chatRoomRef.current = nextRoom;
+        passwordRef.current = password;
+        languageRef.current = language;
+        localStorage.setItem(ROOM_STATE_KEY, JSON.stringify({ roomId: nextRoom, password, language }));
+        setMessages(JSON.parse(localStorage.getItem(CHAT_HISTORY_PREFIX + nextRoom) || '[]'));
+        setRoom(nextRoom);
+        socketRef.current.emit('join-room', { roomId: nextRoom, password, username: currentUser, language, action });
+      }
+
+      function runCode() {
+        if (!roomRef.current) {
+          setTerminal((current) => [...current, '> ERROR: Join a room before running code.']);
+          return;
+        }
+        const code = editorRef.current?.getValue() || '';
+        localStorage.setItem(CHECKPOINT_PREFIX + roomRef.current, code);
+        const runPayload = { code, language };
+        pendingRunRef.current = runPayload;
+        if (!socketRef.current?.connected || !connected) {
+          setTerminal((current) => [...current, '> Waiting for room connection before running...']);
+          return;
+        }
+        socketRef.current.emit('code-change', { roomId: roomRef.current, code });
+        setTerminal((current) => [...current, '> Checkpoint saved. Running your masterpiece...']);
+        socketRef.current.emit('run-code', runPayload);
+      }
+
+      function leaveRoom() {
+        roomRef.current = '';
+        chatRoomRef.current = '';
+        passwordRef.current = '';
+        roleRef.current = 'viewer';
+        pendingRunRef.current = null;
+        localStorage.removeItem(ROOM_STATE_KEY);
+        setRoom('');
+        setRoomInput('');
+        setPassword('');
+        setRole('viewer');
+        setUsers([]);
+        setMessages([]);
+        setConnected(false);
+        setTerminal(['> You left the room. Create or join another room to continue.']);
+        if (editorRef.current) {
+          remoteUpdateRef.current = true;
+          editorRef.current.setValue(initialCode);
+          editorRef.current.updateOptions({ readOnly: true });
+          remoteUpdateRef.current = false;
+        }
+        socketRef.current?.disconnect();
+        socketRef.current?.connect();
+      }
+
+      function sendMessage() {
+        const text = message.trim();
+        if (!text || !roomRef.current) return;
+        socketRef.current.emit('chat-message', { roomId: roomRef.current, username: currentUser, message: text });
+        setMessage('');
+      }
+
+      function changeLanguage(nextLanguage) {
+        setLanguage(nextLanguage);
+        languageRef.current = nextLanguage;
+        if (editorRef.current) {
+          monaco.editor.setModelLanguage(editorRef.current.getModel(), nextLanguage);
+          if (!roomRef.current) {
+            remoteUpdateRef.current = true;
+            editorRef.current.setValue(helloWorldTemplates[nextLanguage]);
+            remoteUpdateRef.current = false;
+          }
+        }
+      }
+
+      function toggleRole(socketId, currentRole) {
+        socketRef.current.emit('toggle-role', { roomId: roomRef.current, targetSocketId: socketId, newRole: currentRole === 'editor' ? 'viewer' : 'editor' });
+      }
+
+      const me = users.find((user) => user.username === currentUser);
+      const canManage = me && (me.role === 'editor' || me.isOwner);
+
+      return <div className="min-h-screen bg-cream font-body">
+        <header className="border-b-4 border-ink bg-pink px-4 py-3 shadow-popSmall">
+          <div className="mx-auto flex max-w-[1600px] flex-wrap items-center gap-3">
+            <div className="mr-auto flex items-center gap-3"><div className="grid h-11 w-11 place-items-center border-3 border-ink bg-yellow font-mono font-bold shadow-popSmall">{'{ }'}</div><div><h1 className="font-display text-2xl leading-none">CODESYNC</h1><p className="font-mono text-[10px] font-bold uppercase">collab coding club</p></div></div>
+            <div className="flex w-full flex-wrap items-center gap-2 md:w-auto"><input value={roomInput} onChange={(event) => setRoomInput(event.target.value)} placeholder="room name" className="min-w-0 flex-1 border-3 border-ink bg-white px-3 py-2 font-mono text-xs shadow-popSmall md:w-32 md:flex-none" /><input value={password} onChange={(event) => setPassword(event.target.value)} type="password" placeholder="password" className="w-24 border-3 border-ink bg-white px-3 py-2 font-mono text-xs shadow-popSmall" /><select value={language} onChange={(event) => changeLanguage(event.target.value)} className="border-3 border-ink bg-yellow px-2 py-2 font-mono text-xs shadow-popSmall"><option value="javascript">JS</option><option value="python">PY</option><option value="go">GO</option></select><button onClick={() => join('create')} className="border-3 border-ink bg-aqua px-3 py-2 font-mono text-xs font-bold shadow-popSmall">+ CREATE</button><button onClick={() => join('join')} className="border-3 border-ink bg-cream px-3 py-2 font-mono text-xs font-bold shadow-popSmall">JOIN</button><button onClick={leaveRoom} disabled={!room} className="border-3 border-ink bg-yellow px-3 py-2 font-mono text-xs font-bold shadow-popSmall disabled:cursor-not-allowed disabled:opacity-50">LEAVE</button><button onClick={runCode} className="border-3 border-ink bg-purple px-4 py-2 font-mono text-xs font-bold text-white shadow-popSmall">▶ RUN</button><button title="Log out" onClick={() => { sessionStorage.removeItem('username'); window.location.href = 'login.html'; }} className="border-3 border-ink bg-ink px-3 py-2 font-mono text-xs font-bold text-white shadow-popSmall">↪</button></div>
+          </div>
+        </header>
+
+        <div className="mx-auto grid max-w-[1600px] gap-5 p-4 md:p-6 lg:grid-cols-[260px_minmax(0,1fr)_280px]">
+          <aside className="order-2 flex flex-col gap-5 lg:order-1"><section className="border-3 border-ink bg-yellow p-4 shadow-pop"><div className="mb-4 flex items-center justify-between"><h2 className="font-display text-lg">THE CREW</h2><span className="rounded-full border-2 border-ink bg-aqua px-2 py-1 font-mono text-[10px] font-bold">{users.length} ONLINE</span></div><div className="space-y-3">{users.length === 0 ? <p className="font-mono text-xs">Waiting for your crew...</p> : users.map((user) => <div key={user.socketId} className="border-2 border-ink bg-cream p-3"><div className="flex items-center gap-2"><div className="grid h-8 w-8 place-items-center rounded-full border-2 border-ink bg-pink font-display text-xs">{user.username[0].toUpperCase()}</div><div className="min-w-0 flex-1"><p className="truncate font-mono text-xs font-bold">{user.username}{user.username === currentUser ? ' (you)' : ''}</p><p className="font-mono text-[10px] uppercase">{user.isOwner ? 'owner' : user.role}</p></div><span className="h-3 w-3 rounded-full border-2 border-ink bg-aqua"></span></div>{canManage && user.username !== currentUser && !user.isOwner && <button onClick={() => toggleRole(user.socketId, user.role)} className="mt-3 w-full border-2 border-ink bg-white py-1 font-mono text-[10px] font-bold">MAKE {user.role === 'editor' ? 'VIEWER' : 'EDITOR'}</button>}</div>)}</div></section><div className="dots hidden min-h-32 border-3 border-ink p-4 lg:block"><p className="font-display text-2xl leading-none">MAKE<br />NOISE.</p><p className="mt-2 font-mono text-[10px]">small ideas welcome</p></div></aside>
+
+          <main className="order-1 min-w-0 lg:order-2"><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><p className="font-mono text-xs font-bold uppercase text-purple">{connected ? '● live session' : '○ no room yet'}</p><h2 className="font-display text-3xl leading-none md:text-4xl">{room || 'YOUR CANVAS'}</h2></div><div className="border-3 border-ink bg-white px-3 py-2 font-mono text-[10px] font-bold shadow-popSmall">{role.toUpperCase()} MODE</div></div><div className="overflow-hidden border-4 border-ink bg-[#211e2b] shadow-pop"><div className="flex items-center gap-2 border-b-3 border-ink bg-ink px-4 py-2 font-mono text-[10px] text-white"><span className="h-3 w-3 rounded-full bg-pink"></span><span className="h-3 w-3 rounded-full bg-yellow"></span><span className="h-3 w-3 rounded-full bg-aqua"></span><span className="ml-2 opacity-70">main.{language === 'javascript' ? 'js' : language === 'python' ? 'py' : 'go'}</span></div><div id="editor-container"></div></div><section className="mt-5 border-3 border-ink bg-ink shadow-pop"><div className="flex items-center justify-between border-b-3 border-ink bg-aqua px-4 py-2"><h3 className="font-display text-sm">OUTPUT / CHAOS LOG</h3><button onClick={() => setTerminal([])} className="font-mono text-[10px] font-bold underline">CLEAR</button></div><pre className="m-0 min-h-28 max-h-44 overflow-auto p-4 font-mono text-xs leading-6 text-aqua">{terminal.join('\n')}</pre></section></main>
+
+          <aside className="order-3 flex min-h-[360px] flex-col border-3 border-ink bg-blue p-4 shadow-pop"><div className="mb-4 flex items-center justify-between"><h2 className="font-display text-lg">ROOM CHAT</h2><span className="font-mono text-xl">✦</span></div><div className="flex-1 space-y-3 overflow-y-auto pr-1">{messages.length === 0 ? <p className="font-mono text-xs">Say hi to the room...</p> : messages.map((item, index) => <div key={index} className={`border-2 border-ink p-3 ${item.username === currentUser ? 'bg-yellow' : 'bg-cream'}`}><p className="font-mono text-[10px] font-bold uppercase">{item.username}</p><p className="mt-1 break-words text-sm font-bold">{item.message}</p></div>)}</div><div className="mt-4 flex gap-2"><input value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && sendMessage()} placeholder="drop a thought..." className="min-w-0 flex-1 border-3 border-ink bg-white px-3 py-3 font-mono text-xs shadow-popSmall" /><button onClick={sendMessage} className="border-3 border-ink bg-pink px-3 font-mono font-bold shadow-popSmall">→</button></div></aside>
+        </div>
+      </div>;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
 </body>
 </html>
